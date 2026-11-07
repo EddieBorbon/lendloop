@@ -1,0 +1,202 @@
+{
+  "name": "LendLoop - Flow 2: Daily Overdue Loan Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000001",
+      "name": "Schedule Trigger (Daily 09:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst secret = $env.N8N_INBOUND_SECRET || '';\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst rawBody = '';\nconst signature = crypto\n  .createHmac('sha256', secret)\n  .update(`${timestamp}.${rawBody}`)\n  .digest('hex');\n\nreturn [\n  {\n    json: {\n      timestamp,\n      signature,\n      convexSiteUrl: $env.CONVEX_SITE_URL\n    }\n  }\n];"
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000002",
+      "name": "Sign GET /overdue-loans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.convexSiteUrl }}/overdue-loans",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000003",
+      "name": "GET Overdue Loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "loans",
+        "options": {}
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000004",
+      "name": "Split Out Overdue Loans",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const loan = $input.first().json;\nconst todayIso = new Date().toISOString().slice(0, 10);\nconst idempotencyKey = `overdue:${loan.loanId}:${todayIso}`;\n\nconsole.log(JSON.stringify({\n  channel: 'overdue_reminder',\n  to: loan.borrowerEmail,\n  borrowerName: loan.borrowerName,\n  toolName: loan.toolName,\n  endDate: loan.endDate,\n  idempotencyKey,\n  message: `Hi ${loan.borrowerName}, your loan for \"${loan.toolName}\" was due on ${loan.endDate}. Please coordinate its return on LendLoop.`\n}));\n\nreturn [\n  {\n    json: {\n      ...loan,\n      idempotencyKey,\n      deliveryStatus: 'sent'\n    }\n  }\n];"
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000005",
+      "name": "Send Overdue Reminder to Borrower",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nconst secret = $env.N8N_INBOUND_SECRET || '';\nconst timestamp = String(Math.floor(Date.now() / 1000));\n\nconst ackPayload = {\n  loanId: item.loanId,\n  idempotencyKey: item.idempotencyKey,\n  status: item.deliveryStatus || 'sent'\n};\nconst rawBody = JSON.stringify(ackPayload);\nconst signature = crypto\n  .createHmac('sha256', secret)\n  .update(`${timestamp}.${rawBody}`)\n  .digest('hex');\n\nreturn [\n  {\n    json: {\n      rawBody,\n      timestamp,\n      signature,\n      convexSiteUrl: $env.CONVEX_SITE_URL\n    }\n  }\n];"
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000006",
+      "name": "Sign POST /reminders/ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.convexSiteUrl }}/reminders/ack",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.rawBody }}",
+        "options": {}
+      },
+      "id": "f2a2b3c4-0002-4000-8000-000000000007",
+      "name": "POST /reminders/ack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Daily 09:00)": {
+      "main": [
+        [
+          {
+            "node": "Sign GET /overdue-loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign GET /overdue-loans": {
+      "main": [
+        [
+          {
+            "node": "GET Overdue Loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Overdue Loans": {
+      "main": [
+        [
+          {
+            "node": "Split Out Overdue Loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Overdue Loans": {
+      "main": [
+        [
+          {
+            "node": "Send Overdue Reminder to Borrower",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Overdue Reminder to Borrower": {
+      "main": [
+        [
+          {
+            "node": "Sign POST /reminders/ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign POST /reminders/ack": {
+      "main": [
+        [
+          {
+            "node": "POST /reminders/ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "lendloop-error-handler"
+  }
+}
+
