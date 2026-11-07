@@ -1,0 +1,321 @@
+{
+  "name": "LendLoop - Flow 1: Loan Event Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-loan-event",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "lendloop-loan-event"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst secret = $env.N8N_OUTBOUND_SECRET || '';\nconst headers = $input.first().json.headers || {};\nconst timestampHeader = headers['x-lendloop-timestamp'] || headers['X-LendLoop-Timestamp'] || '';\nconst signatureHeader = headers['x-lendloop-signature'] || headers['X-LendLoop-Signature'] || '';\n\nconst rawBody = $input.first().binary?.data\n  ? Buffer.from($input.first().binary.data.data, 'base64').toString('utf8')\n  : JSON.stringify($input.first().json.body || {});\n\nconst nowSec = Math.floor(Date.now() / 1000);\nconst tsNum = Number(timestampHeader);\nconst withinWindow = Number.isInteger(tsNum) && Math.abs(nowSec - tsNum) <= 300;\n\nlet valid = false;\nif (secret && timestampHeader && signatureHeader && withinWindow) {\n  const expectedHex = crypto\n    .createHmac('sha256', secret)\n    .update(`${timestampHeader}.${rawBody}`)\n    .digest('hex');\n  const expectedBuf = Buffer.from(expectedHex, 'utf8');\n  const providedBuf = Buffer.from(String(signatureHeader).trim().toLowerCase(), 'utf8');\n  if (expectedBuf.length === providedBuf.length) {\n    valid = crypto.timingSafeEqual(expectedBuf, providedBuf);\n  }\n}\n\nconst body = $input.first().json.body || {};\nreturn [\n  {\n    json: {\n      hmacValid: valid,\n      eventId: body.eventId,\n      type: body.type,\n      loanId: body.loanId,\n      toolName: body.toolName,\n      recipientEmail: body.recipientEmail,\n      recipientName: body.recipientName,\n      startDate: body.startDate,\n      endDate: body.endDate\n    }\n  }\n];"
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000002",
+      "name": "Verify HMAC & Timestamp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-hmac-valid",
+              "leftValue": "={{ $json.hmacValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000003",
+      "name": "Is Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"UNAUTHORIZED\", \"message\": \"Invalid HMAC signature or expired timestamp\" }",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000004",
+      "name": "Respond 401 Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 480]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "loan.requested",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "requested"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "loan.approved",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approved"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "loan.declined",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "declined"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "loan.returned",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "returned"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": "loan.cancelled",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancelled"
+            }
+          ]
+        }
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000005",
+      "name": "Switch by Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst messages = {\n  'loan.requested': `Hi ${item.recipientName}, someone requested to borrow \"${item.toolName}\" from ${item.startDate} to ${item.endDate}.`,\n  'loan.approved': `Good news ${item.recipientName}! Your request to borrow \"${item.toolName}\" (${item.startDate} -> ${item.endDate}) was approved.`,\n  'loan.declined': `Hi ${item.recipientName}, your request to borrow \"${item.toolName}\" (${item.startDate} -> ${item.endDate}) was declined.`,\n  'loan.returned': `Hi ${item.recipientName}, \"${item.toolName}\" has been marked as returned. Thank you!`,\n  'loan.cancelled': `Hi ${item.recipientName}, the borrow request for \"${item.toolName}\" (${item.startDate} -> ${item.endDate}) was cancelled.`\n};\n\nconst subject = `[LendLoop] ${item.type} - ${item.toolName}`;\nconst text = messages[item.type] || `Update on loan ${item.loanId} for ${item.toolName}`;\n\nconsole.log(JSON.stringify({\n  channel: 'notification_dispatch',\n  eventId: item.eventId,\n  to: item.recipientEmail,\n  subject,\n  text\n}));\n\nreturn [{ json: { ...item, subject, text, dispatchedAt: new Date().toISOString() } }];"
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000006",
+      "name": "Send Notification (Retry Enabled)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 200],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"eventId\": \"{{ $json.eventId }}\" }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e1a2b3c4-0001-4000-8000-000000000007",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1400, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify HMAC & Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify HMAC & Timestamp": {
+      "main": [
+        [
+          {
+            "node": "Is Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Switch by Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by Event Type": {
+      "main": [
+        [
+          {
+            "node": "Send Notification (Retry Enabled)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Notification (Retry Enabled)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Notification (Retry Enabled)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Notification (Retry Enabled)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Notification (Retry Enabled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification (Retry Enabled)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "lendloop-error-handler"
+  }
+}
+
