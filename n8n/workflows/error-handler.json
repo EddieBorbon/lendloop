@@ -1,0 +1,65 @@
+{
+  "id": "lendloop-error-handler",
+  "name": "LendLoop - Flow 3: Centralized Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "d3a2b3c4-0003-4000-8000-000000000001",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json || {};\nconst workflowName = payload.workflow?.name || 'Unknown Workflow';\nconst failedNode = payload.execution?.lastNodeExecuted || 'Unknown Node';\nconst errorMessage = payload.execution?.error?.message || 'Unspecified execution error';\nconst executionUrl = payload.execution?.url || '';\nconst occurredAt = new Date().toISOString();\n\nconst alertRecord = {\n  level: 'ERROR',\n  service: 'lendloop-n8n-error-handler',\n  workflowName,\n  failedNode,\n  errorMessage,\n  executionUrl,\n  occurredAt\n};\n\nconsole.error(JSON.stringify(alertRecord));\n\nreturn [{ json: alertRecord }];"
+      },
+      "id": "d3a2b3c4-0003-4000-8000-000000000002",
+      "name": "Format & Log Error Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const alert = $input.first().json;\nconsole.log(JSON.stringify({\n  channel: 'admin_error_alert',\n  subject: `[LendLoop Alert] Workflow Failure in ${alert.workflowName}`,\n  body: `Workflow: ${alert.workflowName}\\nNode: ${alert.failedNode}\\nError: ${alert.errorMessage}\\nTimestamp: ${alert.occurredAt}`\n}));\nreturn [{ json: { ...alert, adminNotified: true } }];"
+      },
+      "id": "d3a2b3c4-0003-4000-8000-000000000003",
+      "name": "Notify Admin of Workflow Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format & Log Error Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format & Log Error Details": {
+      "main": [
+        [
+          {
+            "node": "Notify Admin of Workflow Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
+
